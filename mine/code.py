@@ -120,3 +120,6 @@ def have_a_try():
     oled.text(''+"{:<6}".format(str((xyrobot.getCode(4)))), 40, 32, 0, 0)
 
     oled.show()
+
+
+似乎不够完善
