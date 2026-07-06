@@ -190,7 +190,7 @@ def have_a_try():
     rsd_output = spd_kp*rsd_curr_error + spd_ki*rsd_error_integ + spd_kd*rsd_error_diff # 右电机速度(right speed)控制的输出
 
     if ts_black_block_num is not 0: # 如果有黑色块
-        _set_all_motor(lsd_output, rsd_output)
+        _set_all_motor(CLAMP(lsd_output), CLAMP(rsd_output))
         pass  # 占位语句，防止缩进错误
     else: # 如果没有黑色块
         _set_all_motor(0, 0) # 让车子停止
