@@ -15,14 +15,15 @@ motor_num = 2  # 电机的数量
 motor_index = [1, 4]  # 电机连接的引脚引脚号
 motor_dir_forward = [1, 0]  # 电机方向，1为正转，0为反转
 motor_code_dir_forward = [1, 0]  # 电机编码方向，1为正，0为负
-motor_base_speed = 500  # 电机的基础速度（电机速度范围0~100）
+motor_base_speed = 50  # 电机的基础速度（电机速度范围0~100）
 
 # ts为循迹传感器(tracking_sensor)的缩写
 ts_num = 5
 ts_index = [4, 5, 6, 1, 2]  # 循迹传感器连接ADC引脚的索引
 ts_adc_value = [0, 0, 0, 0, 0]  # 循迹传感器的ADC值，可以通过_get_all_ts_adc_value刷新
 ts_adc_threshold = [1500, 1500, 1500, 1500, 1500]  # 循迹传感器的ADC阈值，用于对循迹传感器的ADC值进行二值化
-ts_status_bin = [False, False, False, False, False] # 白色为false，黑色为true
+ts_status_bin_curr = [False, False, True, False, False] # 白色为false，黑色为true
+ts_status_bin_last = [False, False, True, False, False] # 上一次的二值化结果
 ts_offset_weight = [-63.5, -24.0, 0.0, +24.0, +63.5]  # 循迹传感器的偏移权重，用于将二值化后的ADC值转换为实际距离
 ts_black_block_num = 0 # 循迹传感器所测量到的黑色块的数量
 
@@ -33,9 +34,9 @@ ts_last_error = 0.0  # 上一次的误差
 ts_error_diff = 0.0  # 误差差分项
 ts_error_integ = 0.0  # 误差积分项
 ts_pos_output = 0.0  # 位置控制的输出
-ts_pos_kp = 5.0  # 位置控制的Kp系数
+ts_pos_kp = 2.0  # 位置控制的Kp系数
 ts_pos_ki = 0.0  # 位置控制的Ki系数
-ts_pos_kd = 0.0  # 位置控制的Kd系数
+ts_pos_kd = 5.0  # 位置控制的Kd系数
 
 target_lsd = 0.0  # 左电机目标速度(left speed)
 lsd_curr_error = 0.0  # 左电机速度(left speed)控制的误差
@@ -55,13 +56,13 @@ spd_kd = 0.4  # 速度环控制的Kd系数
 
     # global motor_index, motor_dir_forward, motor_code_dir_forward
     # global ts_num, ts_index, ts_adc_value
-    # global ts_adc_threshold, ts_status_bin, ts_offset_weight
+    # global ts_adc_threshold, ts_status_bin_curr, ts_offset_weight
     # global ts_curr_error, ts_black_block_num
 
 
 
-def CLAMP(x, min, max):
-    return max(min, min(max, x))
+def CLAMP(x, min_value, max_value):
+    return max(min_value, min(max_value, x))
 
 
 
@@ -132,7 +133,7 @@ def have_a_try():
     global motor_base_speed
     global motor_index, motor_dir_forward, motor_code_dir_forward
     global ts_num, ts_index, ts_adc_value
-    global ts_adc_threshold, ts_status_bin, ts_offset_weight
+    global ts_adc_threshold, ts_status_bin_curr, ts_status_bin_last, ts_offset_weight
     global ts_curr_error # 循迹传感器所测量到的误差
     global ts_last_error # 上一次的误差
     global ts_error_diff # 误差差分项
@@ -159,15 +160,17 @@ def have_a_try():
 
     _get_all_ts_adc_value()
 
-    ts_status_bin = [False, False, False, False, False]
+    ts_status_bin_curr = [False, False, True, False, False]
     ts_curr_error = 0.0
     ts_black_block_num = 0
 
     for i in range(ts_num): # 如果大于阈值，为黑色，状态置True，否则为False
-        ts_status_bin[i] = True if ts_adc_value[i] <= ts_adc_threshold[i] else False
+        ts_status_bin_curr[i] = True if ts_adc_value[i] <= ts_adc_threshold[i] else False
     
-    ts_black_block_num = _cnt_black_block_num(ts_status_bin) # 统计黑色块的数量
-    for i in range(ts_num): ts_curr_error += ts_offset_weight[i] if ts_status_bin[i] else 0.0 # 用于位置环控制
+    ts_black_block_num = _cnt_black_block_num(ts_status_bin_curr) # 统计黑色块的数量
+    if ts_black_block_num is 0: ts_status_bin_curr = ts_status_bin_last # 如果没有黑色块，保持上一次的状态
+    ts_status_bin_last = ts_status_bin_curr # 更新上一次的二值化结果
+    for i in range(ts_num): ts_curr_error += ts_offset_weight[i] if ts_status_bin_curr[i] else 0.0 # 用于位置环控制
     left_encoder, right_encoder = _get_encoder_and_zero() # 获取电机的编码值，并清零，用于速度环控制
 
     ts_curr_error   = 0.68*ts_curr_error + 0.32*ts_last_error # 用于P控制
@@ -177,23 +180,26 @@ def have_a_try():
     ts_pos_output = ts_pos_kp*ts_curr_error + ts_pos_ki*ts_error_integ + ts_pos_kd*ts_error_diff # 位置控制输出
 
     target_lsd = motor_base_speed + ts_pos_output # 计算左电机目标速度(left speed)
-    lsd_curr_error = target_lsd - left_encoder # 左电机速度(left speed)控制的误差
+    lsd_curr_error = 30*target_lsd - left_encoder # 左电机速度(left speed)控制的误差
     lsd_error_integ += lsd_curr_error # 左电机速度(left speed)控制的误差积分项
     lsd_error_diff = lsd_curr_error - lsd_last_error # 左电机速度(left speed)控制的误差差分项
     lsd_last_error = lsd_curr_error # 更新上一次的左电机速度(left speed)控制的误差
     lsd_output = spd_kp*lsd_curr_error + spd_ki*lsd_error_integ + spd_kd*lsd_error_diff # 左电机速度(left speed)控制的输出
     target_rsd = motor_base_speed - ts_pos_output # 计算右电机目标速度(right speed)
-    rsd_curr_error = target_rsd - right_encoder # 右电机速度(right speed)控制的误差
+    rsd_curr_error = 30*target_rsd - right_encoder # 右电机速度(right speed)控制的误差
     rsd_error_integ += rsd_curr_error # 右电机速度(right speed)控制的误差积分项
     rsd_error_diff = rsd_curr_error - rsd_last_error # 右电机速度(right speed)控制的误差差分项
     rsd_last_error = rsd_curr_error # 更新上一次的右电机速度(right speed)控制的误差
     rsd_output = spd_kp*rsd_curr_error + spd_ki*rsd_error_integ + spd_kd*rsd_error_diff # 右电机速度(right speed)控制的输出
 
+    lsd_output = int(CLAMP(lsd_output, -10.0, 99.0))
+    rsd_output = int(CLAMP(rsd_output, -10.0, 99.0))
+    _set_all_motor(lsd_output, rsd_output)
     if ts_black_block_num is not 0: # 如果有黑色块
-        _set_all_motor(CLAMP(lsd_output), CLAMP(rsd_output))
         pass  # 占位语句，防止缩进错误
     else: # 如果没有黑色块
-        _set_all_motor(0, 0) # 让车子停止
+        # _set_all_motor(0, 0) # 让车子停止
+        pass
 
 
     oled.text('' + "{:<6}".format(str((ts_adc_value[0]))),  0,  0, 0, 0)
@@ -206,7 +212,8 @@ def have_a_try():
     oled.text('' + "{:<6}".format(str((left_encoder))), 0, 32, 0, 0)
     oled.text('' + "{:<6}".format(str((right_encoder))), 40, 32, 0, 0)
 
-    oled.text('' + "{:<6}".format(str((ts_pos_output))), 0, 48, 0, 0)
+    oled.text('' + "{:<6}".format(str((lsd_output))), 0, 48, 0, 0)
+    oled.text('' + "{:<6}".format(str((rsd_output))), 40, 48, 0, 0)
 
     oled.show()
 
